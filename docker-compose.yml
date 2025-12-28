@@ -1,0 +1,109 @@
+version: '3.8'
+
+services:
+  # MySQL - Source Database
+  mysql:
+    image: mysql:8.0
+    container_name: mysql_source
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: source_db
+      MYSQL_USER: etl_user
+      MYSQL_PASSWORD: etl_password
+    ports:
+      - "13306:3306"  # Using higher port to avoid conflicts
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - etl_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL - Data Warehouse
+  postgres:
+    image: postgres:15
+    container_name: postgres_warehouse
+    environment:
+      POSTGRES_USER: warehouse_user
+      POSTGRES_PASSWORD: warehouse_pass
+      POSTGRES_DB: warehouse_db
+    ports:
+      - "5433:5432"  # Changed to 5433 to avoid potential conflicts
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - etl_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U warehouse_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Jenkins - CI/CD Automation
+  jenkins:
+    build:
+      context: ./jenkins
+      dockerfile: Dockerfile
+    container_name: jenkins_cicd
+    privileged: true
+    user: root
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./:/workspace
+    networks:
+      - etl_network
+    environment:
+      - JAVA_OPTS=-Djenkins.install.runSetupWizard=false
+    depends_on:
+      mysql:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  # ETL Service
+  etl:
+    build:
+      context: ./etl
+      dockerfile: Dockerfile
+    container_name: etl_service
+    networks:
+      - etl_network
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_USER=etl_user
+      - MYSQL_PASSWORD=etl_password
+      - MYSQL_DB=source_db
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USER=warehouse_user
+      - POSTGRES_PASSWORD=warehouse_pass
+      - POSTGRES_DB=warehouse_db
+
+  # dbt Service
+  dbt:
+    image: ghcr.io/dbt-labs/dbt-postgres:1.7.4
+    container_name: dbt_service
+    volumes:
+      - ./dbt_project:/usr/app
+      - ./dbt_project/profiles.yml:/root/.dbt/profiles.yml
+    working_dir: /usr/app
+    networks:
+      - etl_network
+    environment:
+      - DBT_PROFILES_DIR=/root/.dbt
+
+networks:
+  etl_network:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  postgres_data:
+  jenkins_home:

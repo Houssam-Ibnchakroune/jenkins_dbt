@@ -1,0 +1,16 @@
+name: 'etl_pipeline'
+version: '1.0.0'
+
+profile: 'warehouse'
+
+model-paths: ["models"]
+target-path: "target"
+clean-targets:
+  - "target"
+
+models:
+  etl_pipeline:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table
